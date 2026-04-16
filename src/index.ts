@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import {
   getAllCategories,
   getCategoryBySlug,
@@ -8,38 +9,123 @@ import {
   updateCategory,
   reorderCategories,
 } from "./repositories/categoryRepository";
+import {
+  getPostsByThread,
+  getPostById,
+  createPost,
+  updatePost,
+  deletePost,
+} from "./repositories/postRepository";
+import {
+  getThreadById,
+  getThreadsByCategory,
+  createThreadWithPost,
+  updateThread,
+  setThreadLocked,
+  setThreadSticky,
+  deleteThread,
+  getThreadsByUserId,
+} from "./repositories/threadRepository";
+import {
+  findUserByEmail,
+  findUserByUsername,
+  createUser,
+  createRefreshToken,
+  deleteRefreshToken,
+  findRefreshToken,
+  findUserById,
+  updateUser,
+  findUserWithHashById,
+  findMeById,
+  deleteUser,
+} from "./repositories/userRepository";
+import {
+  authenticate,
+  requireAuth,
+  requireAdmin,
+  setCookie,
+  clearCookie,
+  parseCookies,
+} from "./middleware/authenticate";
+import { csrf } from "./middleware/csrf";
+import {
+  rateLimiting,
+  authRateLimiting,
+  publicRateLimiting,
+  apiRateLimiting,
+} from "./middleware/rateLimiting";
+import { AuthTokenPayload } from "./types/auth";
+import { Variables } from "./types/context";
+import { generateAccessToken, generateRefreshToken } from "./utils/auth";
+import {
+  supabaseSignUp,
+  supabaseSignIn,
+  supabaseRefreshToken,
+  supabaseUpdatePassword,
+} from "./utils/supabaseAuth";
 
-const app = new Hono();
+const app = new Hono<{ Variables: Variables }>();
 
-app.get("/categories", async (c) => {
+app.use(
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
+    exposeHeaders: [
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+    ],
+  }),
+);
+
+app.get("/categories", publicRateLimiting(), async (c) => {
   const categories = await getAllCategories();
 
   return c.json({ data: categories });
 });
 
-app.get("/categories/id/:id", async (c) => {
-  const { id } = c.req.param();
+app.get("/categories/id/:id", publicRateLimiting(), async (c) => {
+  const id = c.req.param("id");
+  if (!id) {
+    return c.json(
+      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
   const category = await getCategoryById(id);
 
   if (!category) {
-    return c.json({ error: "Category not found" }, 404);
+    return c.json(
+      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
+      404,
+    );
   }
 
   return c.json({ data: category });
 });
 
-app.get("/categories/:slug", async (c) => {
-  const { slug } = c.req.param();
+app.get("/categories/:slug", publicRateLimiting(), async (c) => {
+  const slug = c.req.param("slug");
+  if (!slug) {
+    return c.json(
+      { error: { message: "Slug is required", code: "MISSING_SLUG" } },
+      400,
+    );
+  }
   const category = await getCategoryBySlug(slug);
 
   if (!category) {
-    return c.json({ error: "Category not found" }, 404);
+    return c.json(
+      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
+      404,
+    );
   }
 
   return c.json({ data: category });
 });
 
-app.post("/categories", async (c) => {
+app.post("/categories", apiRateLimiting(), async (c) => {
   const body = await c.req.json();
   const { name, slug, description } = body;
 
@@ -48,26 +134,44 @@ app.post("/categories", async (c) => {
   return c.json({ data: newCategory }, 201);
 });
 
-app.delete("/categories/:id", async (c) => {
+app.delete("/categories/:id", apiRateLimiting(), async (c) => {
   const id = c.req.param("id");
+  if (!id) {
+    return c.json(
+      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
 
   const category = await getCategoryById(id);
   if (!category) {
-    return c.json({ error: "Category not found" }, 404);
+    return c.json(
+      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
+      404,
+    );
   }
 
   await deleteCategory(id);
   return c.text("", 204);
 });
 
-app.patch("/categories/:id", async (c) => {
+app.patch("/categories/:id", apiRateLimiting(), async (c) => {
   const id = c.req.param("id");
+  if (!id) {
+    return c.json(
+      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
   const body = await c.req.json();
   const { name, description } = body;
 
   const category = await getCategoryById(id);
   if (!category) {
-    return c.json({ error: "Category not found" }, 404);
+    return c.json(
+      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
+      404,
+    );
   }
 
   const fields: {
@@ -93,23 +197,1197 @@ app.patch("/categories/:id", async (c) => {
   return c.json({ data: updatedCategory });
 });
 
-app.patch("/categories/:id/position", async (c) => {
+app.patch("/categories/:id/position", apiRateLimiting(), async (c) => {
   const id = c.req.param("id");
+  if (!id) {
+    return c.json(
+      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
   const body = await c.req.json();
   const { position } = body;
 
   if (typeof position !== "number" || position < 0) {
-    return c.json({ error: "Position must be a non-negative number" }, 400);
+    return c.json(
+      {
+        error: {
+          message: "Position must be a non-negative number",
+          code: "INVALID_POSITION",
+        },
+      },
+      400,
+    );
   }
 
   const category = await getCategoryById(id);
   if (!category) {
-    return c.json({ error: "Category not found" }, 404);
+    return c.json(
+      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
+      404,
+    );
   }
 
   const reorderedCategories = await reorderCategories(id, position);
 
   return c.json({ data: reorderedCategories });
+});
+
+// ============ POST ROUTES ============
+
+app.get("/posts/thread/:threadId", publicRateLimiting(), async (c) => {
+  const threadId = c.req.param("threadId");
+  if (!threadId) {
+    return c.json(
+      { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
+  const query = c.req.query();
+  const page = parseInt(query.page || "1", 10);
+  const pageSize = parseInt(query.pageSize || "20", 10);
+
+  if (page < 1 || pageSize < 1) {
+    return c.json(
+      {
+        error: {
+          message: "Page and pageSize must be positive integers",
+          code: "INVALID_PAGINATION",
+        },
+      },
+      400,
+    );
+  }
+
+  try {
+    const result = await getPostsByThread(threadId, page, pageSize);
+    return c.json({
+      data: {
+        posts: result.posts,
+        pagination: {
+          page,
+          pageSize,
+          totalPosts: result.totalCount,
+          totalPages: Math.ceil(result.totalCount / pageSize),
+        },
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: { message: "Failed to fetch posts", code: "POSTS_FETCH_ERROR" },
+      },
+      500,
+    );
+  }
+});
+
+app.post(
+  "/posts",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const body = await c.req.json();
+      const { thread_id, content } = body;
+
+      if (!thread_id || !content) {
+        return c.json(
+          {
+            error: {
+              message: "thread_id and content are required",
+              code: "MISSING_FIELDS",
+            },
+          },
+          400,
+        );
+      }
+
+      const thread = await getThreadById(thread_id);
+      if (!thread) {
+        return c.json(
+          { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      if (thread.is_locked) {
+        return c.json(
+          { error: { message: "Thread is locked", code: "THREAD_LOCKED" } },
+          403,
+        );
+      }
+
+      const post = await createPost(thread_id, content, user.id);
+
+      return c.json({ data: post }, 201);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to create post",
+            code: "POST_CREATE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.patch(
+  "/posts/:id",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const id = c.req.param("id");
+
+      if (!id) {
+        return c.json(
+          { error: { message: "Post ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const body = await c.req.json();
+      const { content } = body;
+
+      if (!content) {
+        return c.json(
+          { error: { message: "content is required", code: "MISSING_FIELDS" } },
+          400,
+        );
+      }
+
+      const post = await getPostById(id);
+      if (!post) {
+        return c.json(
+          { error: { message: "Post not found", code: "POST_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      // Check authorization: user must be author or admin
+      if (user.role !== "admin" && post.author.id !== user.id) {
+        return c.json(
+          { error: { message: "Forbidden", code: "FORBIDDEN" } },
+          403,
+        );
+      }
+
+      const updated = await updatePost(id, content);
+      return c.json({ data: updated });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to update post",
+            code: "POST_UPDATE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.delete(
+  "/posts/:id",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const id = c.req.param("id");
+
+      if (!id) {
+        return c.json(
+          { error: { message: "Post ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const post = await getPostById(id);
+      if (!post) {
+        return c.json(
+          { error: { message: "Post not found", code: "POST_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      // Check authorization: user must be author or admin
+      if (user.role !== "admin" && post.author.id !== user.id) {
+        return c.json(
+          { error: { message: "Forbidden", code: "FORBIDDEN" } },
+          403,
+        );
+      }
+
+      await deletePost(id);
+      return c.text("", 204);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to delete post",
+            code: "POST_DELETE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+// ============ THREAD ROUTES ============
+
+app.get("/categories/:categoryId/threads", publicRateLimiting(), async (c) => {
+  const categoryId = c.req.param("categoryId");
+  if (!categoryId) {
+    return c.json(
+      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
+  const query = c.req.query();
+  const page = parseInt(query.page || "1", 10);
+  const pageSize = parseInt(query.pageSize || "20", 10);
+
+  if (page < 1 || pageSize < 1) {
+    return c.json(
+      {
+        error: {
+          message: "Page and pageSize must be positive integers",
+          code: "INVALID_PAGINATION",
+        },
+      },
+      400,
+    );
+  }
+
+  try {
+    const category = await getCategoryById(categoryId);
+    if (!category) {
+      return c.json(
+        {
+          error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" },
+        },
+        404,
+      );
+    }
+
+    const result = await getThreadsByCategory(categoryId, page, pageSize);
+    return c.json({
+      data: {
+        category: {
+          id: category.id,
+          slug: category.slug,
+          name: category.name,
+        },
+        threads: result.threads,
+        pagination: {
+          page,
+          pageSize,
+          totalThreads: result.totalCount,
+          totalPages: Math.ceil(result.totalCount / pageSize),
+        },
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: "Failed to fetch threads",
+          code: "THREADS_FETCH_ERROR",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.get("/threads/:id", publicRateLimiting(), async (c) => {
+  const threadId = c.req.param("id");
+  if (!threadId) {
+    return c.json(
+      { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+      400,
+    );
+  }
+  const query = c.req.query();
+  const page = parseInt(query.page || "1", 10);
+  const pageSize = parseInt(query.pageSize || "20", 10);
+
+  if (page < 1 || pageSize < 1) {
+    return c.json(
+      {
+        error: {
+          message: "Page and pageSize must be positive integers",
+          code: "INVALID_PAGINATION",
+        },
+      },
+      400,
+    );
+  }
+
+  try {
+    const thread = await getThreadById(threadId);
+    if (!thread) {
+      return c.json(
+        { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+        404,
+      );
+    }
+
+    const { posts, totalCount } = await getPostsByThread(
+      threadId,
+      page,
+      pageSize,
+    );
+
+    return c.json({
+      data: {
+        thread,
+        posts,
+        pagination: {
+          page,
+          pageSize,
+          totalPosts: totalCount,
+          totalPages: Math.ceil(totalCount / pageSize),
+        },
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: "Failed to fetch thread",
+          code: "THREAD_FETCH_ERROR",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.post(
+  "/threads",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const body = await c.req.json();
+      const { category_id, title, content } = body;
+
+      if (!category_id || !title || !content) {
+        return c.json(
+          {
+            error: {
+              message: "category_id, title, and content are required",
+              code: "MISSING_FIELDS",
+            },
+          },
+          400,
+        );
+      }
+
+      const category = await getCategoryById(category_id);
+      if (!category) {
+        return c.json(
+          {
+            error: {
+              message: "Category not found",
+              code: "CATEGORY_NOT_FOUND",
+            },
+          },
+          404,
+        );
+      }
+
+      const thread = await createThreadWithPost(
+        category_id,
+        title,
+        user.id,
+        content,
+      );
+
+      return c.json({ data: thread }, 201);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to create thread",
+            code: "THREAD_CREATE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.patch(
+  "/threads/:id",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const threadId = c.req.param("id");
+
+      if (!threadId) {
+        return c.json(
+          { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const body = await c.req.json();
+      const { title } = body;
+
+      if (!title) {
+        return c.json(
+          { error: { message: "title is required", code: "MISSING_FIELDS" } },
+          400,
+        );
+      }
+
+      const thread = await getThreadById(threadId);
+      if (!thread) {
+        return c.json(
+          { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      // Check authorization: user must be author or admin
+      if (user.role !== "admin" && thread.author.id !== user.id) {
+        return c.json(
+          { error: { message: "Forbidden", code: "FORBIDDEN" } },
+          403,
+        );
+      }
+
+      // Check if thread is locked (only admin can edit locked threads)
+      if (thread.is_locked && user.role !== "admin") {
+        return c.json(
+          { error: { message: "Thread is locked", code: "THREAD_LOCKED" } },
+          403,
+        );
+      }
+
+      const updated = await updateThread(threadId, title);
+      return c.json({ data: updated });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to update thread",
+            code: "THREAD_UPDATE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.patch(
+  "/threads/:id/lock",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
+    try {
+      const threadId = c.req.param("id");
+
+      if (!threadId) {
+        return c.json(
+          { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const body = await c.req.json();
+      const { is_locked } = body;
+
+      if (typeof is_locked !== "boolean") {
+        return c.json(
+          {
+            error: {
+              message: "is_locked must be a boolean",
+              code: "INVALID_TYPE",
+            },
+          },
+          400,
+        );
+      }
+
+      const thread = await getThreadById(threadId);
+      if (!thread) {
+        return c.json(
+          { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      const updated = await setThreadLocked(threadId, is_locked);
+      return c.json({ data: updated });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to lock/unlock thread",
+            code: "THREAD_LOCK_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.patch(
+  "/threads/:id/sticky",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
+    try {
+      const threadId = c.req.param("id");
+
+      if (!threadId) {
+        return c.json(
+          { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const body = await c.req.json();
+      const { is_sticky } = body;
+
+      if (typeof is_sticky !== "boolean") {
+        return c.json(
+          {
+            error: {
+              message: "is_sticky must be a boolean",
+              code: "INVALID_TYPE",
+            },
+          },
+          400,
+        );
+      }
+
+      const thread = await getThreadById(threadId);
+      if (!thread) {
+        return c.json(
+          { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      const updated = await setThreadSticky(threadId, is_sticky);
+      return c.json({ data: updated });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to set thread sticky",
+            code: "THREAD_STICKY_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.delete(
+  "/threads/:id",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
+    try {
+      const threadId = c.req.param("id");
+
+      if (!threadId) {
+        return c.json(
+          { error: { message: "Thread ID is required", code: "MISSING_ID" } },
+          400,
+        );
+      }
+
+      const thread = await getThreadById(threadId);
+      if (!thread) {
+        return c.json(
+          { error: { message: "Thread not found", code: "THREAD_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      await deleteThread(threadId);
+      return c.text("", 204);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to delete thread",
+            code: "THREAD_DELETE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+// ============ USER ROUTES ============
+
+app.get(
+  "/users/me",
+  publicRateLimiting(),
+  authenticate,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const profile = await findMeById(user.id);
+
+      if (!profile) {
+        return c.json(
+          { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      return c.json({ data: profile });
+    } catch (error) {
+      return c.json(
+        {
+          error: { message: "Failed to fetch user", code: "USER_FETCH_ERROR" },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.get("/users/:username", publicRateLimiting(), async (c) => {
+  try {
+    const username = c.req.param("username");
+    if (!username) {
+      return c.json(
+        {
+          error: { message: "Username is required", code: "MISSING_USERNAME" },
+        },
+        400,
+      );
+    }
+
+    const user = await findUserByUsername(username);
+    if (!user) {
+      return c.json(
+        { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+        404,
+      );
+    }
+
+    return c.json({ data: user });
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: "Failed to fetch user profile",
+          code: "USER_PROFILE_FETCH_ERROR",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.get("/users/:username/threads", publicRateLimiting(), async (c) => {
+  try {
+    const username = c.req.param("username");
+    if (!username) {
+      return c.json(
+        {
+          error: { message: "Username is required", code: "MISSING_USERNAME" },
+        },
+        400,
+      );
+    }
+    const query = c.req.query();
+    const page = parseInt(query.page || "1", 10);
+    const pageSize = parseInt(query.pageSize || "10", 10);
+
+    if (page < 1 || pageSize < 1) {
+      return c.json(
+        {
+          error: {
+            message: "Page and pageSize must be positive integers",
+            code: "INVALID_PAGINATION",
+          },
+        },
+        400,
+      );
+    }
+
+    const user = await findUserByUsername(username);
+    if (!user) {
+      return c.json(
+        { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+        404,
+      );
+    }
+
+    const result = await getThreadsByUserId(user.id, page, pageSize);
+
+    return c.json({
+      data: {
+        threads: result.threads,
+        pagination: {
+          page,
+          pageSize,
+          totalThreads: result.totalCount,
+          totalPages: Math.ceil(result.totalCount / pageSize),
+        },
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: "Failed to fetch user threads",
+          code: "USER_THREADS_FETCH_ERROR",
+        },
+      },
+      500,
+    );
+  }
+});
+
+app.patch(
+  "/users/me",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const body = await c.req.json();
+      const { email, currentPassword, newPassword } = body;
+
+      // Fetch user with email for password verification
+      const userWithEmail = await findUserWithHashById(user.id);
+      if (!userWithEmail) {
+        return c.json(
+          { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+          404,
+        );
+      }
+
+      const fields: { email?: string; password_hash?: string } = {};
+
+      if (email !== undefined) {
+        const existingUser = await findUserByEmail(email.trim());
+        if (existingUser && existingUser.id !== user.id) {
+          return c.json(
+            {
+              error: { message: "Email already in use", code: "EMAIL_IN_USE" },
+            },
+            409,
+          );
+        }
+        fields.email = email.trim();
+      }
+
+      if (newPassword !== undefined) {
+        if (!currentPassword) {
+          return c.json(
+            {
+              error: {
+                message: "currentPassword is required to set a new password",
+                code: "MISSING_CURRENT_PASSWORD",
+              },
+            },
+            400,
+          );
+        }
+
+        // Verify current password with Supabase Auth
+        try {
+          await supabaseSignIn(userWithEmail.email, currentPassword);
+        } catch (error: any) {
+          return c.json(
+            {
+              error: {
+                message: "Current password is incorrect",
+                code: "INVALID_PASSWORD",
+              },
+            },
+            401,
+          );
+        }
+
+        // Update password via Supabase Auth
+        try {
+          await supabaseUpdatePassword(user.id, newPassword);
+          // Password updated successfully
+        } catch (error: any) {
+          return c.json(
+            {
+              error: {
+                message: error.message || "Failed to update password",
+                code: "PASSWORD_UPDATE_ERROR",
+              },
+            },
+            400,
+          );
+        }
+      }
+
+      const updated = await updateUser(user.id, fields);
+      return c.json({ data: updated });
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to update user profile",
+            code: "USER_UPDATE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.delete(
+  "/users/me",
+  apiRateLimiting(),
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      await deleteUser(user.id);
+      return c.text("", 204);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to delete user account",
+            code: "USER_DELETE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+  },
+);
+
+// ============ AUTH ROUTES ============
+
+app.post("/auth/register", authRateLimiting(), async (c) => {
+  try {
+    const body = await c.req.json();
+    const { username, email, password } = body;
+
+    if (!username || !email || !password) {
+      return c.json(
+        {
+          error: {
+            message: "username, email, and password are required",
+            code: "MISSING_FIELDS",
+          },
+        },
+        400,
+      );
+    }
+
+    if (await findUserByUsername(username)) {
+      return c.json(
+        {
+          error: {
+            message: "Username already exists",
+            code: "USERNAME_EXISTS",
+          },
+        },
+        409,
+      );
+    }
+
+    // Delegate to Supabase Auth
+    const supabaseUser = await supabaseSignUp(email, password, { username });
+
+    // Create local user record linked to Supabase Auth
+    const user = await createUser(username, email, supabaseUser.user.id);
+
+    // Store refresh token
+    const refreshToken = supabaseUser.session.refresh_token;
+    const expiresIn = supabaseUser.session.expires_in;
+    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await createRefreshToken(user.id, refreshToken, refreshTokenExpiry);
+
+    // Use Supabase's access token directly (valid for 1 hour)
+    const accessToken = supabaseUser.session.access_token;
+
+    // Set cookies
+    setCookie(c, "accessToken", accessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: expiresIn,
+    });
+    setCookie(c, "refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: 7 * 24 * 60 * 60,
+    });
+
+    return c.json({
+      data: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+    });
+  } catch (error: any) {
+    return c.json(
+      {
+        error: {
+          message: error.message || "Failed to register user",
+          code: "REGISTRATION_ERROR",
+        },
+      },
+      400,
+    );
+  }
+});
+
+app.post("/auth/login", authRateLimiting(), async (c) => {
+  try {
+    const body = await c.req.json();
+    const { email, password } = body;
+
+    if (!email || !password) {
+      return c.json(
+        {
+          error: {
+            message: "email and password are required",
+            code: "MISSING_FIELDS",
+          },
+        },
+        400,
+      );
+    }
+
+    const user = await findUserByEmail(email);
+    if (!user) {
+      return c.json(
+        {
+          error: {
+            message: "Invalid email or password",
+            code: "INVALID_CREDENTIALS",
+          },
+        },
+        401,
+      );
+    }
+
+    // Delegate to Supabase Auth for password verification
+    const supabaseSession = await supabaseSignIn(email, password);
+
+    // Store refresh token
+    const refreshToken = supabaseSession.session.refresh_token;
+    const expiresIn = supabaseSession.session.expires_in;
+    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await createRefreshToken(user.id, refreshToken, refreshTokenExpiry);
+
+    // Use Supabase's access token
+    const accessToken = supabaseSession.session.access_token;
+
+    // Set cookies
+    setCookie(c, "accessToken", accessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: expiresIn,
+    });
+    setCookie(c, "refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: 7 * 24 * 60 * 60,
+    });
+
+    return c.json({
+      data: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+    });
+  } catch (error: any) {
+    return c.json(
+      {
+        error: {
+          message: error.message || "Failed to login",
+          code: "LOGIN_ERROR",
+        },
+      },
+      401,
+    );
+  }
+});
+
+app.post("/auth/refresh", authRateLimiting(), async (c) => {
+  try {
+    const cookieHeader = c.req.header("cookie") || "";
+    const cookies = parseCookies(cookieHeader);
+    const refreshToken = cookies.refreshToken;
+
+    if (!refreshToken) {
+      return c.json(
+        {
+          error: {
+            message: "Refresh token is required",
+            code: "MISSING_REFRESH_TOKEN",
+          },
+        },
+        401,
+      );
+    }
+
+    // Verify refresh token exists in our database
+    const tokenRecord = await findRefreshToken(refreshToken);
+    if (!tokenRecord) {
+      return c.json(
+        {
+          error: {
+            message: "Invalid or expired refresh token",
+            code: "INVALID_REFRESH_TOKEN",
+          },
+        },
+        401,
+      );
+    }
+
+    const expiresAt = new Date(tokenRecord.expires_at);
+    if (expiresAt < new Date()) {
+      await deleteRefreshToken(refreshToken);
+      return c.json(
+        {
+          error: {
+            message: "Refresh token has expired",
+            code: "REFRESH_TOKEN_EXPIRED",
+          },
+        },
+        401,
+      );
+    }
+
+    // Delegate to Supabase Auth to refresh tokens
+    const newSession = await supabaseRefreshToken(refreshToken);
+
+    const user = await findUserById(tokenRecord.user_id);
+    if (!user) {
+      return c.json(
+        { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+        401,
+      );
+    }
+
+    // Update refresh token in database if Supabase returned a new one
+    if (newSession.refresh_token !== refreshToken) {
+      await deleteRefreshToken(refreshToken);
+      const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await createRefreshToken(
+        user.id,
+        newSession.refresh_token,
+        refreshTokenExpiry,
+      );
+    }
+
+    // Set new access token cookie
+    setCookie(c, "accessToken", newSession.access_token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: newSession.expires_in,
+    });
+
+    // Update refresh token cookie if new one was issued
+    if (newSession.refresh_token !== refreshToken) {
+      setCookie(c, "refreshToken", newSession.refresh_token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "Strict",
+        maxAge: 7 * 24 * 60 * 60,
+      });
+    }
+
+    return c.json({
+      data: {
+        id: user.id,
+        username: user.username,
+      },
+    });
+  } catch (error: any) {
+    return c.json(
+      {
+        error: {
+          message: error.message || "Failed to refresh token",
+          code: "REFRESH_ERROR",
+        },
+      },
+      401,
+    );
+  }
+});
+
+app.post("/auth/logout", authRateLimiting(), async (c) => {
+  try {
+    const cookieHeader = c.req.header("cookie") || "";
+    const cookies = parseCookies(cookieHeader);
+    const refreshToken = cookies.refreshToken;
+
+    if (refreshToken) {
+      await deleteRefreshToken(refreshToken);
+    }
+
+    clearCookie(c, "accessToken");
+    clearCookie(c, "refreshToken");
+
+    return c.json({ data: { message: "Logout successful" } });
+  } catch (error) {
+    return c.json(
+      { error: { message: "Failed to logout", code: "LOGOUT_ERROR" } },
+      500,
+    );
+  }
 });
 
 export default app;

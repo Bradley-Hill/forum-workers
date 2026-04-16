@@ -1,7 +1,8 @@
-import { supabase } from "../db/supabase";
+import { getSupabase } from "../db/supabase";
 import { Category } from "../types/category";
 
 export async function getAllCategories(): Promise<Category[]> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .select("id, slug, name, description, position")
@@ -15,6 +16,7 @@ export async function getAllCategories(): Promise<Category[]> {
 export async function getCategoryBySlug(
   slug: string,
 ): Promise<Category | null> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .select("id, slug, name, description, position")
@@ -31,6 +33,7 @@ export async function createCategory(
   name: string,
   description: string,
 ): Promise<Category> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .insert({ slug, name, description })
@@ -43,6 +46,7 @@ export async function createCategory(
 }
 
 export async function getCategoryById(id: string): Promise<Category | null> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .select("id, slug, name, description, position")
@@ -55,6 +59,7 @@ export async function getCategoryById(id: string): Promise<Category | null> {
 }
 
 export async function deleteCategory(id: string): Promise<void> {
+  const supabase = getSupabase();
   const { error } = await supabase.from("categories").delete().eq("id", id);
 
   if (error) throw error;
@@ -69,6 +74,7 @@ export async function updateCategory(
     position?: number;
   },
 ): Promise<Category> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .update(fields)
@@ -85,11 +91,11 @@ export async function reorderCategories(
   categoryId: string,
   newPosition: number,
 ): Promise<Category[]> {
-    const { data, error } = await supabase
-    .rpc('reorder_category', {
-        p_category_id: categoryId,
-        p_new_position: newPosition
-    });
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc("reorder_category", {
+    p_category_id: categoryId,
+    p_new_position: newPosition,
+  });
 
   if (error) throw error;
 
