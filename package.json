@@ -1,0 +1,16 @@
+{
+  "name": "forum-workers",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.103.2",
+    "hono": "^4.12.14"
+  },
+  "devDependencies": {
+    "wrangler": "^4.4.0"
+  }
+}
