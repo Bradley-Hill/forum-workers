@@ -41,7 +41,11 @@ export async function getThreadById(threadId: string): Promise<Thread | null> {
     is_locked: data.is_locked,
     created_at: data.created_at,
     updated_at: data.updated_at,
-    author: data.author && data.author.length > 0 ? data.author[0] : { id: "", username: "", avatar_url: undefined },
+    author: data.author
+      ? Array.isArray(data.author)
+        ? data.author[0]
+        : data.author
+      : { id: "", username: "", avatar_url: undefined },
     reply_count: count || 0,
   } as Thread;
 }
@@ -100,7 +104,11 @@ export async function getThreadsByCategory(
         is_locked: thread.is_locked,
         created_at: thread.created_at,
         updated_at: thread.updated_at,
-        author: thread.author && thread.author.length > 0 ? thread.author[0] : { id: "", username: "", avatar_url: undefined },
+        author: thread.author
+          ? Array.isArray(thread.author)
+            ? thread.author[0]
+            : thread.author
+          : { id: "", username: "", avatar_url: undefined },
         reply_count: postCount || 0,
       } as Thread;
     })
@@ -264,7 +272,11 @@ export async function getThreadsByUserId(
         is_locked: thread.is_locked,
         created_at: thread.created_at,
         updated_at: thread.updated_at,
-        author: thread.author && thread.author.length > 0 ? thread.author[0] : { id: "", username: "", avatar_url: undefined },
+        author: thread.author
+          ? Array.isArray(thread.author)
+            ? thread.author[0]
+            : thread.author
+          : { id: "", username: "", avatar_url: undefined },
         reply_count: postCount || 0,
       } as Thread;
     })

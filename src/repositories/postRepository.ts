@@ -43,7 +43,11 @@ export async function getPostsByThread(
     content: post.content,
     created_at: post.created_at,
     updated_at: post.updated_at,
-    author: post.author && post.author.length > 0 ? post.author[0] : { id: "", username: "", avatar_url: undefined },
+    author: post.author 
+      ? Array.isArray(post.author) 
+        ? post.author[0] 
+        : post.author 
+      : { id: "", username: "", avatar_url: undefined },
   })) as Post[];
 
   return {
@@ -83,7 +87,11 @@ export async function getPostById(postId: string): Promise<Post | null> {
     content: data.content,
     created_at: data.created_at,
     updated_at: data.updated_at,
-    author: data.author && data.author.length > 0 ? data.author[0] : { id: "", username: "", avatar_url: undefined },
+    author: data.author
+      ? Array.isArray(data.author)
+        ? data.author[0]
+        : data.author
+      : { id: "", username: "", avatar_url: undefined },
   } as Post;
 }
 
