@@ -1182,10 +1182,6 @@ app.patch(
               error: {
                 message: error.message || "Failed to update password",
                 code: "PASSWORD_UPDATE_ERROR",
-                debug: {
-                  authId: userProfile.auth_id,
-                  originalError: error.toString(),
-                },
               },
             },
             400,
@@ -1218,13 +1214,40 @@ app.delete(
   async (c) => {
     try {
       const user = c.get("user") as AuthTokenPayload;
+      
+      // Get user profile to access auth_id
+      const userProfile = await findMeById(user.id);
+      if (!userProfile) {
+        return c.json(
+          {
+            error: {
+              message: "User not found",
+              code: "USER_NOT_FOUND",
+            },
+          },
+          404,
+        );
+      }
+
+      // Delete from Supabase Auth first
+      if (userProfile.auth_id) {
+        const supabase = getSupabase();
+        const { error: authError } = await supabase.auth.admin.deleteUser(
+          userProfile.auth_id,
+        );
+        if (authError) {
+          throw new Error(`Failed to delete auth user: ${authError.message}`);
+        }
+      }
+
+      // Then delete from forum database
       await deleteUser(user.id);
       return c.text("", 204);
-    } catch (error) {
+    } catch (error: any) {
       return c.json(
         {
           error: {
-            message: "Failed to delete user account",
+            message: error.message || "Failed to delete user account",
             code: "USER_DELETE_ERROR",
           },
         },
