@@ -67,6 +67,7 @@ import {
   supabaseRefreshToken,
   supabaseUpdatePassword,
 } from "./utils/supabaseAuth";
+import { getSupabase } from "./db/supabase";
 
 type Environment = {
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -910,6 +911,88 @@ app.get(
       return c.json(
         {
           error: { message: "Failed to fetch user", code: "USER_FETCH_ERROR" },
+        },
+        500,
+      );
+    }
+  },
+);
+
+app.post(
+  "/users/me/avatar",
+  authenticate,
+  csrf,
+  requireAuth,
+  async (c) => {
+    try {
+      const user = c.get("user") as AuthTokenPayload;
+      const formData = await c.req.formData();
+      const avatarFile = formData.get("avatar");
+
+      if (!avatarFile || typeof avatarFile === "string") {
+        return c.json(
+          {
+            error: {
+              message: "No file uploaded",
+              code: "VALIDATION_ERROR",
+            },
+          },
+          400,
+        );
+      }
+
+      const supabase = getSupabase();
+      const filename = `${user.id}/avatar.jpg`;
+
+      const buffer = await (avatarFile as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
+
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filename, buffer, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
+
+      if (uploadError) {
+        return c.json(
+          {
+            error: {
+              message: "Failed to upload avatar",
+              code: "STORAGE_ERROR",
+            },
+          },
+          500,
+        );
+      }
+
+      const { data } = supabase.storage.from("avatars").getPublicUrl(filename);
+      const publicUrl = data.publicUrl;
+
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({ avatar_url: publicUrl })
+        .eq("id", user.id);
+
+      if (updateError) {
+        return c.json(
+          {
+            error: {
+              message: "Failed to update user",
+              code: "DATABASE_ERROR",
+            },
+          },
+          500,
+        );
+      }
+
+      return c.json({ data: { avatar_url: publicUrl } }, 200);
+    } catch (error) {
+      return c.json(
+        {
+          error: {
+            message: "Internal server error",
+            code: "INTERNAL_ERROR",
+          },
         },
         500,
       );
