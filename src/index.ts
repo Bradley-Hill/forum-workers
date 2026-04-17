@@ -216,39 +216,56 @@ app.patch("/categories/:id", apiRateLimiting(), async (c) => {
 });
 
 app.patch("/categories/:id/position", apiRateLimiting(), async (c) => {
-  const id = c.req.param("id");
-  if (!id) {
-    return c.json(
-      { error: { message: "Category ID is required", code: "MISSING_ID" } },
-      400,
-    );
-  }
-  const body = await c.req.json();
-  const { position } = body;
+  try {
+    const id = c.req.param("id");
+    if (!id) {
+      return c.json(
+        { error: { message: "Category ID is required", code: "MISSING_ID" } },
+        400,
+      );
+    }
+    const body = await c.req.json();
+    const { position } = body;
 
-  if (typeof position !== "number" || position < 0) {
+    if (typeof position !== "number" || position < 0) {
+      return c.json(
+        {
+          error: {
+            message: "Position must be a non-negative number",
+            code: "INVALID_POSITION",
+          },
+        },
+        400,
+      );
+    }
+
+    const category = await getCategoryById(id);
+    if (!category) {
+      return c.json(
+        {
+          error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" },
+        },
+        404,
+      );
+    }
+
+    const reorderedCategories = await reorderCategories(id, position);
+
+    return c.json({ data: reorderedCategories });
+  } catch (error) {
     return c.json(
       {
         error: {
-          message: "Position must be a non-negative number",
-          code: "INVALID_POSITION",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to reorder categories",
+          code: "DATABASE_ERROR",
         },
       },
-      400,
+      500,
     );
   }
-
-  const category = await getCategoryById(id);
-  if (!category) {
-    return c.json(
-      { error: { message: "Category not found", code: "CATEGORY_NOT_FOUND" } },
-      404,
-    );
-  }
-
-  const reorderedCategories = await reorderCategories(id, position);
-
-  return c.json({ data: reorderedCategories });
 });
 
 // ============ POST ROUTES ============
@@ -1121,7 +1138,8 @@ app.patch(
         return c.json(
           {
             error: {
-              message: "Your account needs to be re-registered with the new authentication system. Please log out and create a new account.",
+              message:
+                "Your account needs to be re-registered with the new authentication system. Please log out and create a new account.",
               code: "AUTH_MIGRATION_REQUIRED",
             },
           },
@@ -1214,7 +1232,7 @@ app.delete(
   async (c) => {
     try {
       const user = c.get("user") as AuthTokenPayload;
-      
+
       // Get user profile to access auth_id
       const userProfile = await findMeById(user.id);
       if (!userProfile) {
