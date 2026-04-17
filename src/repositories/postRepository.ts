@@ -38,8 +38,12 @@ export async function getPostsByThread(
   if (error) throw error;
 
   const posts = (data || []).map((post: any) => ({
-    ...post,
-    author: post.author ? post.author[0] : null,
+    id: post.id,
+    thread_id: post.thread_id,
+    content: post.content,
+    created_at: post.created_at,
+    updated_at: post.updated_at,
+    author: post.author && post.author.length > 0 ? post.author[0] : { id: "", username: "", avatar_url: undefined },
   })) as Post[];
 
   return {
@@ -67,13 +71,19 @@ export async function getPostById(postId: string): Promise<Post | null> {
     `,
     )
     .eq("id", postId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
+  if (!data) return null;
+
   return {
-    ...data,
-    author: data.author ? data.author[0] : null,
+    id: data.id,
+    thread_id: data.thread_id,
+    content: data.content,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+    author: data.author && data.author.length > 0 ? data.author[0] : { id: "", username: "", avatar_url: undefined },
   } as Post;
 }
 

@@ -22,9 +22,11 @@ export async function getThreadById(threadId: string): Promise<Thread | null> {
     `,
     )
     .eq("id", threadId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
+
+  if (!data) return null;
 
   const { count } = await supabase
     .from("posts")
@@ -32,8 +34,14 @@ export async function getThreadById(threadId: string): Promise<Thread | null> {
     .eq("thread_id", threadId);
 
   return {
-    ...data,
-    author: data.author ? data.author[0] : null,
+    id: data.id,
+    category_id: data.category_id,
+    title: data.title,
+    is_sticky: data.is_sticky,
+    is_locked: data.is_locked,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+    author: data.author && data.author.length > 0 ? data.author[0] : { id: "", username: "", avatar_url: undefined },
     reply_count: count || 0,
   } as Thread;
 }
@@ -77,10 +85,26 @@ export async function getThreadsByCategory(
 
   if (error) throw error;
 
-  const threads = (data || []).map((thread: any) => ({
-    ...thread,
-    author: thread.author ? thread.author[0] : null,
-  })) as Thread[];
+  const threads = await Promise.all(
+    (data || []).map(async (thread: any) => {
+      const { count: postCount } = await supabase
+        .from("posts")
+        .select("*", { count: "exact", head: true })
+        .eq("thread_id", thread.id);
+
+      return {
+        id: thread.id,
+        category_id: thread.category_id,
+        title: thread.title,
+        is_sticky: thread.is_sticky,
+        is_locked: thread.is_locked,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+        author: thread.author && thread.author.length > 0 ? thread.author[0] : { id: "", username: "", avatar_url: undefined },
+        reply_count: postCount || 0,
+      } as Thread;
+    })
+  );
 
   return {
     threads,
@@ -225,10 +249,26 @@ export async function getThreadsByUserId(
 
   if (error) throw error;
 
-  const threads = (data || []).map((thread: any) => ({
-    ...thread,
-    author: thread.author ? thread.author[0] : null,
-  })) as Thread[];
+  const threads = await Promise.all(
+    (data || []).map(async (thread: any) => {
+      const { count: postCount } = await supabase
+        .from("posts")
+        .select("*", { count: "exact", head: true })
+        .eq("thread_id", thread.id);
+
+      return {
+        id: thread.id,
+        category_id: thread.category_id,
+        title: thread.title,
+        is_sticky: thread.is_sticky,
+        is_locked: thread.is_locked,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+        author: thread.author && thread.author.length > 0 ? thread.author[0] : { id: "", username: "", avatar_url: undefined },
+        reply_count: postCount || 0,
+      } as Thread;
+    })
+  );
 
   return {
     threads,

@@ -7,7 +7,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
     .from("users")
     .select("id, username, email, password_hash, role, created_at, avatar_url")
     .eq("email", email)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
@@ -22,7 +22,7 @@ export async function findUserByUsername(
     .from("users")
     .select("id, username, role, created_at, avatar_url")
     .eq("username", username)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
@@ -32,7 +32,6 @@ export async function findUserByUsername(
 export async function createUser(
   username: string,
   email: string,
-  passwordHash: string,
 ): Promise<RegisteredUser> {
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -40,7 +39,6 @@ export async function createUser(
     .insert({
       username,
       email,
-      password_hash: passwordHash,
       role: "member",
     })
     .select("id, username, email, role")
@@ -83,7 +81,7 @@ export async function findRefreshToken(
     .from("refresh_tokens")
     .select("user_id, expires_at")
     .eq("token", token)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
@@ -96,7 +94,7 @@ export async function findUserById(id: string): Promise<PublicUser | null> {
     .from("users")
     .select("id, username, role, created_at, avatar_url")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
@@ -125,7 +123,7 @@ export async function findUserWithHashById(id: string): Promise<User | null> {
     .from("users")
     .select("id, username, email, password_hash, role, created_at, avatar_url")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
@@ -138,7 +136,7 @@ export async function findMeById(id: string): Promise<MeUser | null> {
     .from("users")
     .select("id, username, email, role, created_at, avatar_url")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 

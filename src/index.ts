@@ -56,7 +56,11 @@ import {
 } from "./middleware/rateLimiting";
 import { AuthTokenPayload } from "./types/auth";
 import { Variables } from "./types/context";
-import { generateAccessToken, generateRefreshToken } from "./utils/auth";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  generateCSRFToken,
+} from "./utils/auth";
 import {
   supabaseSignUp,
   supabaseSignIn,
@@ -64,13 +68,24 @@ import {
   supabaseUpdatePassword,
 } from "./utils/supabaseAuth";
 
-const app = new Hono<{ Variables: Variables }>();
+type Environment = {
+  SUPABASE_SERVICE_ROLE_KEY: string;
+};
+
+const app = new Hono<{ Variables: Variables; Bindings: Environment }>();
+
+app.use(async (c, next) => {
+  (globalThis as any).SUPABASE_SERVICE_ROLE_KEY =
+    c.env.SUPABASE_SERVICE_ROLE_KEY;
+  await next();
+});
 
 app.use(
   cors({
-    origin: "*",
+    origin: "https://forum.bradley-hill.com",
+    credentials: true,
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
+    allowHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "Cookie"],
     exposeHeaders: [
       "X-RateLimit-Limit",
       "X-RateLimit-Remaining",
@@ -78,6 +93,8 @@ app.use(
     ],
   }),
 );
+
+app.use(csrf);
 
 app.get("/categories", publicRateLimiting(), async (c) => {
   const categories = await getAllCategories();
@@ -267,7 +284,7 @@ app.get("/posts/thread/:threadId", publicRateLimiting(), async (c) => {
         pagination: {
           page,
           pageSize,
-          totalPosts: result.totalCount,
+          totalItems: result.totalCount,
           totalPages: Math.ceil(result.totalCount / pageSize),
         },
       },
@@ -451,10 +468,15 @@ app.delete(
 // ============ THREAD ROUTES ============
 
 app.get("/categories/:categoryId/threads", publicRateLimiting(), async (c) => {
-  const categoryId = c.req.param("categoryId");
-  if (!categoryId) {
+  const categoryParam = c.req.param("categoryId");
+  if (!categoryParam) {
     return c.json(
-      { error: { message: "Category ID is required", code: "MISSING_ID" } },
+      {
+        error: {
+          message: "Category ID or slug is required",
+          code: "MISSING_ID",
+        },
+      },
       400,
     );
   }
@@ -475,7 +497,12 @@ app.get("/categories/:categoryId/threads", publicRateLimiting(), async (c) => {
   }
 
   try {
-    const category = await getCategoryById(categoryId);
+    // Try to fetch by slug first (most common), then by ID
+    let category = await getCategoryBySlug(categoryParam);
+    if (!category) {
+      category = await getCategoryById(categoryParam);
+    }
+
     if (!category) {
       return c.json(
         {
@@ -485,7 +512,7 @@ app.get("/categories/:categoryId/threads", publicRateLimiting(), async (c) => {
       );
     }
 
-    const result = await getThreadsByCategory(categoryId, page, pageSize);
+    const result = await getThreadsByCategory(category.id, page, pageSize);
     return c.json({
       data: {
         category: {
@@ -497,7 +524,7 @@ app.get("/categories/:categoryId/threads", publicRateLimiting(), async (c) => {
         pagination: {
           page,
           pageSize,
-          totalThreads: result.totalCount,
+          totalItems: result.totalCount,
           totalPages: Math.ceil(result.totalCount / pageSize),
         },
       },
@@ -561,7 +588,7 @@ app.get("/threads/:id", publicRateLimiting(), async (c) => {
         pagination: {
           page,
           pageSize,
-          totalPosts: totalCount,
+          totalItems: totalCount,
           totalPages: Math.ceil(totalCount / pageSize),
         },
       },
@@ -967,7 +994,7 @@ app.get("/users/:username/threads", publicRateLimiting(), async (c) => {
         pagination: {
           page,
           pageSize,
-          totalThreads: result.totalCount,
+          totalItems: result.totalCount,
           totalPages: Math.ceil(result.totalCount / pageSize),
         },
       },
@@ -1138,33 +1165,41 @@ app.post("/auth/register", authRateLimiting(), async (c) => {
       );
     }
 
-    // Delegate to Supabase Auth
     const supabaseUser = await supabaseSignUp(email, password, { username });
 
-    // Create local user record linked to Supabase Auth
-    const user = await createUser(username, email, supabaseUser.user.id);
+    const user = await createUser(username, email);
 
-    // Store refresh token
     const refreshToken = supabaseUser.session.refresh_token;
     const expiresIn = supabaseUser.session.expires_in;
     const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await createRefreshToken(user.id, refreshToken, refreshTokenExpiry);
 
-    // Use Supabase's access token directly (valid for 1 hour)
-    const accessToken = supabaseUser.session.access_token;
+    // Generate our own access token with user info
+    const accessToken = await generateAccessToken({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    });
 
-    // Set cookies
+    const csrfToken = generateCSRFToken();
+
     setCookie(c, "accessToken", accessToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
+      sameSite: "None",
       maxAge: expiresIn,
     });
     setCookie(c, "refreshToken", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
+      sameSite: "None",
       maxAge: 7 * 24 * 60 * 60,
+    });
+    setCookie(c, "csrfToken", csrfToken, {
+      httpOnly: false,
+      secure: true,
+      sameSite: "None",
+      maxAge: 3600,
     });
 
     return c.json({
@@ -1172,6 +1207,7 @@ app.post("/auth/register", authRateLimiting(), async (c) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        csrfToken,
       },
     });
   } catch (error: any) {
@@ -1217,30 +1253,39 @@ app.post("/auth/login", authRateLimiting(), async (c) => {
       );
     }
 
-    // Delegate to Supabase Auth for password verification
     const supabaseSession = await supabaseSignIn(email, password);
 
-    // Store refresh token
     const refreshToken = supabaseSession.session.refresh_token;
     const expiresIn = supabaseSession.session.expires_in;
     const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await createRefreshToken(user.id, refreshToken, refreshTokenExpiry);
 
-    // Use Supabase's access token
-    const accessToken = supabaseSession.session.access_token;
+    // Generate our own access token with user info
+    const accessToken = await generateAccessToken({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    });
 
-    // Set cookies
+    const csrfToken = generateCSRFToken();
+
     setCookie(c, "accessToken", accessToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
+      sameSite: "None",
       maxAge: expiresIn,
     });
     setCookie(c, "refreshToken", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
+      sameSite: "None",
       maxAge: 7 * 24 * 60 * 60,
+    });
+    setCookie(c, "csrfToken", csrfToken, {
+      httpOnly: false,
+      secure: true,
+      sameSite: "None",
+      maxAge: 3600,
     });
 
     return c.json({
@@ -1248,6 +1293,7 @@ app.post("/auth/login", authRateLimiting(), async (c) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        csrfToken,
       },
     });
   } catch (error: any) {
@@ -1331,11 +1377,17 @@ app.post("/auth/refresh", authRateLimiting(), async (c) => {
       );
     }
 
+    const accessToken = await generateAccessToken({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    });
+
     // Set new access token cookie
-    setCookie(c, "accessToken", newSession.access_token, {
+    setCookie(c, "accessToken", accessToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
+      sameSite: "None",
       maxAge: newSession.expires_in,
     });
 
@@ -1344,15 +1396,24 @@ app.post("/auth/refresh", authRateLimiting(), async (c) => {
       setCookie(c, "refreshToken", newSession.refresh_token, {
         httpOnly: true,
         secure: true,
-        sameSite: "Strict",
+        sameSite: "None",
         maxAge: 7 * 24 * 60 * 60,
       });
     }
+
+    const csrfToken = generateCSRFToken();
+    setCookie(c, "csrfToken", csrfToken, {
+      httpOnly: false,
+      secure: true,
+      sameSite: "None",
+      maxAge: 3600,
+    });
 
     return c.json({
       data: {
         id: user.id,
         username: user.username,
+        csrfToken,
       },
     });
   } catch (error: any) {
@@ -1378,8 +1439,8 @@ app.post("/auth/logout", authRateLimiting(), async (c) => {
       await deleteRefreshToken(refreshToken);
     }
 
-    clearCookie(c, "accessToken");
-    clearCookie(c, "refreshToken");
+    setCookie(c, "accessToken", "", { maxAge: 0, sameSite: "None" });
+    setCookie(c, "refreshToken", "", { maxAge: 0, sameSite: "None" });
 
     return c.json({ data: { message: "Logout successful" } });
   } catch (error) {

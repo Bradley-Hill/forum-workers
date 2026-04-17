@@ -21,11 +21,11 @@ export async function getCategoryBySlug(
     .from("categories")
     .select("id, slug, name, description, position")
     .eq("slug", slug)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  return data as Category;
+  return data as Category | null;
 }
 
 export async function createCategory(
@@ -51,11 +51,11 @@ export async function getCategoryById(id: string): Promise<Category | null> {
     .from("categories")
     .select("id, slug, name, description, position")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  return data as Category;
+  return data as Category | null;
 }
 
 export async function deleteCategory(id: string): Promise<void> {
