@@ -30,4 +30,5 @@ export interface MeUser {
   role: "member" | "admin";
   created_at: string;
   avatar_url?: string;
+  auth_id: string;
 }

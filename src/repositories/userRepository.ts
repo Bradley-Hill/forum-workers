@@ -32,6 +32,7 @@ export async function findUserByUsername(
 export async function createUser(
   username: string,
   email: string,
+  authId: string,
 ): Promise<RegisteredUser> {
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -39,6 +40,7 @@ export async function createUser(
     .insert({
       username,
       email,
+      auth_id: authId,
       role: "member",
     })
     .select("id, username, email, role")
@@ -134,7 +136,7 @@ export async function findMeById(id: string): Promise<MeUser | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("users")
-    .select("id, username, email, role, created_at, avatar_url")
+    .select("id, username, email, role, created_at, avatar_url, auth_id")
     .eq("id", id)
     .maybeSingle();
 

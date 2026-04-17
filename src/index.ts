@@ -918,87 +918,83 @@ app.get(
   },
 );
 
-app.post(
-  "/users/me/avatar",
-  authenticate,
-  csrf,
-  requireAuth,
-  async (c) => {
-    try {
-      const user = c.get("user") as AuthTokenPayload;
-      const formData = await c.req.formData();
-      const avatarFile = formData.get("avatar");
+app.post("/users/me/avatar", authenticate, csrf, requireAuth, async (c) => {
+  try {
+    const user = c.get("user") as AuthTokenPayload;
+    const formData = await c.req.formData();
+    const avatarFile = formData.get("avatar");
 
-      if (!avatarFile || typeof avatarFile === "string") {
-        return c.json(
-          {
-            error: {
-              message: "No file uploaded",
-              code: "VALIDATION_ERROR",
-            },
-          },
-          400,
-        );
-      }
-
-      const supabase = getSupabase();
-      const filename = `${user.id}/avatar.jpg`;
-
-      const buffer = await (avatarFile as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
-
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(filename, buffer, {
-          contentType: "image/jpeg",
-          upsert: true,
-        });
-
-      if (uploadError) {
-        return c.json(
-          {
-            error: {
-              message: "Failed to upload avatar",
-              code: "STORAGE_ERROR",
-            },
-          },
-          500,
-        );
-      }
-
-      const { data } = supabase.storage.from("avatars").getPublicUrl(filename);
-      const publicUrl = data.publicUrl;
-
-      const { error: updateError } = await supabase
-        .from("users")
-        .update({ avatar_url: publicUrl })
-        .eq("id", user.id);
-
-      if (updateError) {
-        return c.json(
-          {
-            error: {
-              message: "Failed to update user",
-              code: "DATABASE_ERROR",
-            },
-          },
-          500,
-        );
-      }
-
-      return c.json({ data: { avatar_url: publicUrl } }, 200);
-    } catch (error) {
+    if (!avatarFile || typeof avatarFile === "string") {
       return c.json(
         {
           error: {
-            message: "Internal server error",
-            code: "INTERNAL_ERROR",
+            message: "No file uploaded",
+            code: "VALIDATION_ERROR",
+          },
+        },
+        400,
+      );
+    }
+
+    const supabase = getSupabase();
+    const filename = `${user.id}/avatar.jpg`;
+
+    const buffer = await (
+      avatarFile as { arrayBuffer: () => Promise<ArrayBuffer> }
+    ).arrayBuffer();
+
+    const { error: uploadError } = await supabase.storage
+      .from("avatars")
+      .upload(filename, buffer, {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to upload avatar",
+            code: "STORAGE_ERROR",
           },
         },
         500,
       );
     }
-  },
-);
+
+    const { data } = supabase.storage.from("avatars").getPublicUrl(filename);
+    const publicUrl = data.publicUrl;
+
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ avatar_url: publicUrl })
+      .eq("id", user.id);
+
+    if (updateError) {
+      return c.json(
+        {
+          error: {
+            message: "Failed to update user",
+            code: "DATABASE_ERROR",
+          },
+        },
+        500,
+      );
+    }
+
+    return c.json({ data: { avatar_url: publicUrl } }, 200);
+  } catch (error) {
+    return c.json(
+      {
+        error: {
+          message: "Internal server error",
+          code: "INTERNAL_ERROR",
+        },
+      },
+      500,
+    );
+  }
+});
 
 app.get("/users/:username", publicRateLimiting(), async (c) => {
   try {
@@ -1107,16 +1103,33 @@ app.patch(
       const body = await c.req.json();
       const { email, currentPassword, newPassword } = body;
 
-      // Fetch user with email for password verification
-      const userWithEmail = await findUserWithHashById(user.id);
-      if (!userWithEmail) {
+      const userProfile = await findMeById(user.id);
+
+      if (!userProfile) {
         return c.json(
-          { error: { message: "User not found", code: "USER_NOT_FOUND" } },
+          {
+            error: {
+              message: "User not found",
+              code: "USER_NOT_FOUND",
+            },
+          },
           404,
         );
       }
 
-      const fields: { email?: string; password_hash?: string } = {};
+      if (!userProfile.auth_id) {
+        return c.json(
+          {
+            error: {
+              message: "Your account needs to be re-registered with the new authentication system. Please log out and create a new account.",
+              code: "AUTH_MIGRATION_REQUIRED",
+            },
+          },
+          403,
+        );
+      }
+
+      const fields: { email?: string } = {};
 
       if (email !== undefined) {
         const existingUser = await findUserByEmail(email.trim());
@@ -1146,7 +1159,7 @@ app.patch(
 
         // Verify current password with Supabase Auth
         try {
-          await supabaseSignIn(userWithEmail.email, currentPassword);
+          await supabaseSignIn(userProfile.email, currentPassword);
         } catch (error: any) {
           return c.json(
             {
@@ -1161,7 +1174,7 @@ app.patch(
 
         // Update password via Supabase Auth
         try {
-          await supabaseUpdatePassword(user.id, newPassword);
+          await supabaseUpdatePassword(userProfile.auth_id, newPassword);
           // Password updated successfully
         } catch (error: any) {
           return c.json(
@@ -1169,6 +1182,10 @@ app.patch(
               error: {
                 message: error.message || "Failed to update password",
                 code: "PASSWORD_UPDATE_ERROR",
+                debug: {
+                  authId: userProfile.auth_id,
+                  originalError: error.toString(),
+                },
               },
             },
             400,
@@ -1250,7 +1267,7 @@ app.post("/auth/register", authRateLimiting(), async (c) => {
 
     const supabaseUser = await supabaseSignUp(email, password, { username });
 
-    const user = await createUser(username, email);
+    const user = await createUser(username, email, supabaseUser.user.id);
 
     const refreshToken = supabaseUser.session.refresh_token;
     const expiresIn = supabaseUser.session.expires_in;
