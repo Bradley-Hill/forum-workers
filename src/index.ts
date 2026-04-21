@@ -143,7 +143,12 @@ app.get("/categories/:slug", publicRateLimiting(), async (c) => {
   return c.json({ data: category });
 });
 
-app.post("/categories", apiRateLimiting(), async (c) => {
+app.post(
+  "/categories",
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
   const body = await c.req.json();
   const { name, description } = body;
 
@@ -170,7 +175,12 @@ app.post("/categories", apiRateLimiting(), async (c) => {
   return c.json({ data: newCategory }, 201);
 });
 
-app.delete("/categories/:id", apiRateLimiting(), async (c) => {
+app.delete(
+  "/categories/:id",
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
   const id = c.req.param("id");
   if (!id) {
     return c.json(
@@ -191,7 +201,12 @@ app.delete("/categories/:id", apiRateLimiting(), async (c) => {
   return c.text("", 204);
 });
 
-app.patch("/categories/:id", apiRateLimiting(), async (c) => {
+app.patch(
+  "/categories/:id",
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
   const id = c.req.param("id");
   if (!id) {
     return c.json(
@@ -233,9 +248,14 @@ app.patch("/categories/:id", apiRateLimiting(), async (c) => {
   return c.json({ data: updatedCategory });
 });
 
-app.patch("/categories/:id/position", apiRateLimiting(), async (c) => {
-  try {
-    const id = c.req.param("id");
+app.patch(
+  "/categories/:id/position",
+  authenticate,
+  csrf,
+  requireAdmin,
+  async (c) => {
+    try {
+      const id = c.req.param("id");
     if (!id) {
       return c.json(
         { error: { message: "Category ID is required", code: "MISSING_ID" } },
@@ -795,7 +815,6 @@ app.patch(
 
 app.patch(
   "/threads/:id/lock",
-  apiRateLimiting(),
   authenticate,
   csrf,
   requireAdmin,
@@ -851,7 +870,6 @@ app.patch(
 
 app.patch(
   "/threads/:id/sticky",
-  apiRateLimiting(),
   authenticate,
   csrf,
   requireAdmin,
@@ -907,7 +925,6 @@ app.patch(
 
 app.delete(
   "/threads/:id",
-  apiRateLimiting(),
   authenticate,
   csrf,
   requireAdmin,
