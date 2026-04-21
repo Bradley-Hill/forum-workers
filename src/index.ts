@@ -245,7 +245,31 @@ app.patch("/categories/:id/position", apiRateLimiting(), async (c) => {
     const body = await c.req.json();
     const { position } = body;
 
-    if (typeof position !== "number" || position < 0) {
+    if (position === undefined || position === null) {
+      return c.json(
+        {
+          error: {
+            message: "Position is required",
+            code: "MISSING_POSITION",
+          },
+        },
+        400,
+      );
+    }
+
+    if (typeof position !== "number" || !Number.isInteger(position)) {
+      return c.json(
+        {
+          error: {
+            message: "Position must be an integer",
+            code: "INVALID_POSITION_TYPE",
+          },
+        },
+        400,
+      );
+    }
+
+    if (position < 0) {
       return c.json(
         {
           error: {

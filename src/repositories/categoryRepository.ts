@@ -106,7 +106,6 @@ export async function reorderCategories(
 
   const currentPosition = category.position as number;
 
-  // If no change needed, just return all categories
   if (currentPosition === newPosition) {
     const { data, error } = await supabase
       .from("categories")
@@ -117,7 +116,6 @@ export async function reorderCategories(
     return data as Category[];
   }
 
-  // Get all categories
   const { data: allCategories, error: allError } = await supabase
     .from("categories")
     .select("id, slug, name, description, position")
@@ -126,10 +124,19 @@ export async function reorderCategories(
   if (allError) throw allError;
   if (!allCategories) throw new Error("Failed to fetch categories");
 
-  // Update categories one by one
+  const TEMP_OFFSET = 10000;
+
+  const tempPosition = TEMP_OFFSET + currentPosition;
+  const { error: tempError } = await supabase
+    .from("categories")
+    .update({ position: tempPosition })
+    .eq("id", categoryId);
+
+  if (tempError) throw tempError;
+
   if (newPosition > currentPosition) {
-    // Moving down: shift intermediate categories up
     for (const cat of allCategories) {
+      if (cat.id === categoryId) continue;
       if (
         cat.position > currentPosition &&
         cat.position <= newPosition
@@ -141,8 +148,8 @@ export async function reorderCategories(
       }
     }
   } else {
-    // Moving up: shift intermediate categories down
     for (const cat of allCategories) {
+      if (cat.id === categoryId) continue;
       if (
         cat.position >= newPosition &&
         cat.position < currentPosition
@@ -155,7 +162,6 @@ export async function reorderCategories(
     }
   }
 
-  // Finally, update the target category to the new position
   const { error: finalError } = await supabase
     .from("categories")
     .update({ position: newPosition })
