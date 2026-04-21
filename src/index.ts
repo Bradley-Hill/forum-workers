@@ -145,9 +145,27 @@ app.get("/categories/:slug", publicRateLimiting(), async (c) => {
 
 app.post("/categories", apiRateLimiting(), async (c) => {
   const body = await c.req.json();
-  const { name, slug, description } = body;
+  const { name, description } = body;
 
-  const newCategory = await createCategory(slug, name, description);
+  if (!name || !description) {
+    return c.json(
+      {
+        error: {
+          message: "Name and description are required",
+          code: "MISSING_FIELDS",
+        },
+      },
+      400,
+    );
+  }
+
+  const trimmedName = name.trim();
+  const slug = trimmedName
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9\-]/g, "");
+
+  const newCategory = await createCategory(slug, trimmedName, description);
 
   return c.json({ data: newCategory }, 201);
 });
